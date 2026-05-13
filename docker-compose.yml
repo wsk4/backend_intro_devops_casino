@@ -1,0 +1,59 @@
+version: "3.9"
+
+networks:
+  casino-net:
+    driver: bridge
+
+volumes:
+  pg_data:
+
+services:
+  db:
+    build: ./db
+    container_name: casino-db
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - casino-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    container_name: casino-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: ${PORT}
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+    ports:
+      - "${PORT}:${PORT}"
+    networks:
+      - casino-net
+
+  frontend:
+    build: ../frontend_intro_devops_casino
+    container_name: casino-frontend
+    depends_on:
+      - backend
+    environment:
+      BACKEND_HOST: backend
+    ports:
+      - "80:80"
+    networks:
+      - casino-net
