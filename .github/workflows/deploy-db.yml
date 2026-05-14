@@ -39,6 +39,9 @@ jobs:
           host: ${{ secrets.EC2_DATABASE_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          proxy_host: ${{ secrets.EC2_FRONTEND_HOST }}
+          proxy_username: ec2-user
+          proxy_key: ${{ secrets.EC2_SSH_KEY }}
           envs: IMAGE
           script: |
             aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
