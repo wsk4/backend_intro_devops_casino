@@ -1,18 +1,30 @@
-name: Build & Deploy backend
+name: CI/CD — casino-backend
 
+# Disparado por push a la rama deploy o por Git tag vX.Y.Z
 on:
-  workflow_dispatch:
   push:
-    branches: [ deploy ]
-    paths-ignore: [ 'db/**' ]
+    branches:
+      - deploy
+    tags:
+      - "v*.*.*"
+
+env:
+  AWS_REGION:     ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  EKS_CLUSTER:    ${{ secrets.EKS_CLUSTER }}
 
 jobs:
   build-push-deploy:
+    name: Build → ECR → EKS
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Configurar credenciales AWS
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: 1. Checkout del código
+        uses: actions/checkout@v4
+
+      # ── 2. Credenciales AWS (temporales AWS Academy) ───────────────────────
+      - name: 2. Configurar credenciales AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -20,45 +32,79 @@ jobs:
           aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Login a ECR
-        id: ecr
+      # ── 3. Login a Amazon ECR ──────────────────────────────────────────────
+      - name: 3. Login a Amazon ECR
+        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-        with:
-          mask-password: 'true'
 
-      - name: Build & push backend
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
+      # ── 4. Calcular tags de imagen ─────────────────────────────────────────
+      # Tres tags simultáneos: vX.Y.Z (si es tag), latest y SHA del commit
+      - name: 4. Calcular tags de imagen
+        id: tags
         run: |
-          IMAGE=$REGISTRY/casino-backend
-          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
-          docker push $IMAGE:${{ github.sha }}
-          docker push $IMAGE:latest
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          REPO="${{ env.ECR_REPOSITORY }}"
+          SHA="${{ github.sha }}"
+          BASE="${REGISTRY}/${REPO}"
 
-      - name: Desplegar en EC2-backend
-        uses: appleboy/ssh-action@v1
+          TAGS="${BASE}:${SHA}"
+          TAGS="${TAGS},${BASE}:latest"
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            TAGS="${TAGS},${BASE}:${VERSION}"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "image=${BASE}:${SHA}" >> $GITHUB_OUTPUT
+          echo "Tags a publicar: ${TAGS}"
+
+      # ── 5. Build de la imagen Docker ───────────────────────────────────────
+      - name: 5. Build de la imagen Docker
+        run: |
+          docker build \
+            --tag ${{ steps.tags.outputs.image }} \
+            --label "git-commit=${{ github.sha }}" \
+            --label "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            .
+
+      # ── 6. Push a Amazon ECR (todos los tags) ─────────────────────────────
+      - name: 6. Push a Amazon ECR
+        run: |
+          IFS=',' read -ra TAG_LIST <<< "${{ steps.tags.outputs.tags }}"
+          for TAG in "${TAG_LIST[@]}"; do
+            docker tag ${{ steps.tags.outputs.image }} "${TAG}"
+            docker push "${TAG}"
+          done
+
+      # ── 7. Actualizar kubeconfig y desplegar en EKS ────────────────────────
+      - name: 7. Desplegar en EKS
         env:
-          IMAGE: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/casino-backend:latest
-        with:
-          host: ${{ secrets.EC2_BACKEND_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          proxy_host: ${{ secrets.EC2_FRONTEND_HOST }}
-          proxy_username: ec2-user
-          proxy_key: ${{ secrets.EC2_SSH_KEY }}
-          envs: IMAGE
-          script: |
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-              | docker login --username AWS --password-stdin \
-                ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-            docker pull "$IMAGE"
-            docker rm -f casino-backend || true
-            docker run -d --name casino-backend --restart unless-stopped \
-              -p 3000:3000 \
-              -e DB_HOST=${{ secrets.DB_HOST_PRIVATE }} \
-              -e DB_USER=casino \
-              -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
-              -e DB_NAME=casino_db \
-              -e JWT_SECRET=${{ secrets.JWT_SECRET }} \
-              -e CORS_ORIGIN="*" \
-              "$IMAGE"
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER }} \
+            --region ${{ env.AWS_REGION }}
+
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          sed -i \
+            "s|<AWS_ACCOUNT_ID>|${ACCOUNT_ID}|g; \
+             s|<REGION>|${{ env.AWS_REGION }}|g; \
+             s|:latest|:${IMAGE_TAG}|g" \
+            k8s/backend-deployment.yaml
+
+          kubectl apply -f k8s/backend-deployment.yaml
+          kubectl apply -f k8s/backend-service.yaml
+
+          kubectl rollout status deployment/casino-backend --timeout=120s
+
+      # ── 8. Verificar despliegue ────────────────────────────────────────────
+      - name: 8. Verificar pods
+        run: |
+          echo "── Pods ──────────────────────────────────"
+          kubectl get pods -l app=casino-backend
+          echo "── Imagen desplegada ─────────────────────"
+          kubectl get deployment casino-backend \
+            -o jsonpath='{.spec.template.spec.containers[0].image}'
+          echo ""
