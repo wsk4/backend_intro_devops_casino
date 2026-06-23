@@ -27,4 +27,4 @@ build/
 coverage/
 
 # Secret con valores reales (nunca subir)
-k8s/casino-secrets-real.yaml
+k8s/casino-secrets.yaml
