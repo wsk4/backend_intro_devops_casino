@@ -96,6 +96,8 @@ jobs:
 
           kubectl apply -f k8s/backend-deployment.yaml
           kubectl apply -f k8s/backend-service.yaml
+          kubectl apply -f k8s/backend-hpa.yaml
+
 
           kubectl rollout status deployment/casino-backend --timeout=120s
 
