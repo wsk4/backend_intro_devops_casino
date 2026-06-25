@@ -10,3 +10,4 @@ coverage
 CLAUDE.md
 
 k8s/casino-secrets.yaml
+.DS_Store
