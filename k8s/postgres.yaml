@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: postgres
-        image: postgres:15-alpine
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/casino-postgres:latest
         ports:
         - containerPort: 5432
         env:

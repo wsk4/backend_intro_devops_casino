@@ -36,6 +36,13 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ── 3b. Build y push imagen PostgreSQL con init.sql ───────────────────
+      - name: 3b. Build y push imagen PostgreSQL
+        run: |
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          docker build -t ${REGISTRY}/casino-postgres:latest ./db
+          docker push ${REGISTRY}/casino-postgres:latest
+
       # ── 4. Calcular tags de imagen ─────────────────────────────────────────
       # Tres tags simultáneos: vX.Y.Z (si es tag), latest y SHA del commit
       - name: 4. Calcular tags de imagen
@@ -92,6 +99,11 @@ jobs:
              s|<REGION>|${{ env.AWS_REGION }}|g; \
              s|:latest|:${IMAGE_TAG}|g" \
             k8s/backend-deployment.yaml
+
+          sed -i \
+            "s|<AWS_ACCOUNT_ID>|${ACCOUNT_ID}|g; \
+             s|<REGION>|${{ env.AWS_REGION }}|g" \
+            k8s/postgres.yaml
 
           # Desplegar PostgreSQL primero y esperar que esté listo
           kubectl apply -f k8s/postgres.yaml
