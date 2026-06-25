@@ -1,6 +1,5 @@
 name: CI/CD — casino-backend
 
-# Disparado por push a la rama deploy o por Git tag vX.Y.Z
 on:
   push:
     branches:
@@ -68,7 +67,7 @@ jobs:
             --label "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             .
 
-      # ── 6. Push a Amazon ECR (todos los tags) ─────────────────────────────
+      # ── 6. Push a Amazon ECR (todos los tags) ──────────────────────────────
       - name: 6. Push a Amazon ECR
         run: |
           IFS=',' read -ra TAG_LIST <<< "${{ steps.tags.outputs.tags }}"
@@ -94,10 +93,14 @@ jobs:
              s|:latest|:${IMAGE_TAG}|g" \
             k8s/backend-deployment.yaml
 
+          # Desplegar PostgreSQL primero y esperar que esté listo
+          kubectl apply -f k8s/postgres.yaml
+          kubectl rollout status deployment/postgres --timeout=60s
+
+          # Desplegar backend y servicios
           kubectl apply -f k8s/backend-deployment.yaml
           kubectl apply -f k8s/backend-service.yaml
           kubectl apply -f k8s/backend-hpa.yaml
-
 
           kubectl rollout status deployment/casino-backend --timeout=120s
 
