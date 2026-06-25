@@ -1,7 +1,37 @@
-node_modules
+# Dependencias (se instalan en el builder)
+node_modules/
+
+# Variables de entorno
 .env
 .env.*
-npm-debug.log
+!.env.example
+
+# Control de versiones
 .git
 .gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+
+# Kubernetes
+k8s/
+
+# CI/CD
+.github/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Docs
 README.md
+
+# Tests
+coverage/

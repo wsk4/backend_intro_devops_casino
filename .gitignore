@@ -1,8 +1,30 @@
-node_modules
-.env
-*.log
-coverage
+# Dependencias
+node_modules/
 
-# Claude Code
-.claude/
-CLAUDE.md
+# Variables de entorno (nunca commitear)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+
+# Tests
+coverage/
+
+# Secret con valores reales (nunca subir)
+k8s/casino-secrets.yaml

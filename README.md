@@ -1,206 +1,243 @@
 # casino-backend
 
-Backend del **Casino Online** — Experiencia 2 de la asignatura
-**Introducción a Herramientas DevOps (ISY1101)**.
+API REST del casino VidalCasino (Node.js/Express + PostgreSQL). Es el único servicio
+que **emite JWT** (HS256); todos los demás microservicios solo lo validan. Gestiona
+autenticación, usuarios, juegos y transacciones. Se expone como `ClusterIP` dentro
+del clúster, por lo que nunca es accesible directamente desde Internet. [cite:38][file:26]
 
-API REST en Node.js + Express con PostgreSQL como base de datos.
-
-> **Este repositorio NO incluye `Dockerfile`, `docker-compose.yml`
-> ni workflows de GitHub Actions.** Esos artefactos forman parte del
-> entregable de la **Evaluación Parcial 2** y deben construirlos los
-> estudiantes (frontend + backend + base de datos contenerizados,
-> publicados en un registry y desplegados en EC2).
+- **Puerto:** `3000`
+- **Prefijos de rutas:** `/api/auth`, `/api/usuarios`, `/api/juegos`, `/api/transacciones`
 
 ---
 
-## Stack
+## Estructura del repositorio
 
-- Node.js 20 (recomendado correr sobre `node:20-alpine`)
-- Express 4
-- PostgreSQL 16 (recomendado `postgres:16-alpine` con volumen nombrado)
-- JWT para autenticación, bcryptjs para hashes
-- `pg` como cliente de Postgres
-
----
-
-## Estructura
-
-```
-casino-backend/
+```text
+backend_intro_devops_casino/
 ├── src/
-│   ├── server.js                ← bootstrap Express + rutas
+│   ├── server.js
 │   ├── db/
-│   │   ├── pool.js              ← Pool de pg + esperarBD()
-│   │   └── seed.js              ← usuarios demo (idempotente)
-│   ├── middleware/
-│   │   └── auth.js              ← JWT firmar / requiereAuth
-│   ├── routes/
-│   │   ├── auth.js              ← /api/auth/login | register
-│   │   ├── users.js             ← /api/usuarios/me, depositar
-│   │   ├── games.js             ← /api/juegos/{slots,roulette,blackjack}
-│   │   └── transactions.js      ← /api/transacciones (historial)
-│   └── games/
-│       ├── slots.js
-│       ├── roulette.js
-│       └── blackjack.js
+│   │   ├── pool.js
+│   │   └── seed.js
+│   └── routes/
+│       ├── auth.js
+│       ├── users.js
+│       ├── games.js
+│       └── transactions.js
 ├── db/
-│   └── init.sql                 ← esquema (lo monta Postgres en /docker-entrypoint-initdb.d)
-├── package.json
+├── k8s/
+│   ├── backend-deployment.yaml
+│   ├── backend-service.yaml
+│   └── casino-secrets.yaml
+├── .github/
+│   └── workflows/
+│       └── deploy-backend.yml
+├── .dockerignore
+├── .env.example
 ├── .gitignore
-└── .env.example
+├── Dockerfile
+├── package.json
+└── README.md
 ```
+
+Mantén el repo limpio: sin `.env`, sin `node_modules` y eliminando `.DS_Store`, porque el PDF exige estructura ordenada y sin archivos basura o secretos en el repositorio. [file:26][cite:30]
 
 ---
 
 ## Variables de entorno
 
-| Variable        | Default       | Descripción                                   |
-|-----------------|---------------|-----------------------------------------------|
-| `PORT`          | `3000`        | Puerto HTTP del servidor                      |
-| `JWT_SECRET`    | `cambiame`    | Secreto de firma JWT (cambiar en producción)  |
-| `JWT_EXPIRES_IN`| `8h`          | Vigencia del token                            |
-| `DB_HOST`       | `localhost`   | Host de Postgres (`db` en docker-compose)     |
-| `DB_PORT`       | `5432`        | Puerto Postgres                               |
-| `DB_USER`       | `casino`      | Usuario Postgres                              |
-| `DB_PASSWORD`   | `casino`      | Password Postgres                             |
-| `DB_NAME`       | `casino_db`   | Base de datos                                 |
-| `CORS_ORIGIN`   | `*`           | Lista CSV de orígenes permitidos              |
+Copia `.env.example` a `.env` y ajusta los valores reales. **No commitees** `.env`. [cite:38][file:26]
+
+| Variable | Descripción | Ejemplo |
+|---|---|---|
+| `PORT` | Puerto del servidor | `3000` [cite:38] |
+| `JWT_SECRET` | Clave de firma JWT compartida con todos los servicios | `cambiame-en-produccion` [cite:38] |
+| `JWT_EXPIRES_IN` | Tiempo de expiración del token | `8h` [cite:38] |
+| `DB_HOST` | Host de PostgreSQL | `localhost` [cite:38] |
+| `DB_PORT` | Puerto de PostgreSQL | `5432` [cite:38] |
+| `DB_USER` | Usuario de BD | `casino` [cite:38] |
+| `DB_PASSWORD` | Contraseña de BD | `casino` [cite:38] |
+| `DB_NAME` | Nombre de la base | `casino_db` [cite:38] |
+| `CORS_ORIGIN` | Orígenes CORS permitidos | `*` [cite:38] |
 
 ---
 
-## Endpoints
+## Cómo construir
 
-### Autenticación
-
-| Método | Ruta                  | Descripción                              |
-|--------|-----------------------|------------------------------------------|
-| POST   | `/api/auth/register`  | Registro `{ username, email, password }` |
-| POST   | `/api/auth/login`     | Login `{ username, password }`           |
-
-### Usuario autenticado (header `Authorization: Bearer <token>`)
-
-| Método | Ruta                                  | Descripción                       |
-|--------|---------------------------------------|-----------------------------------|
-| GET    | `/api/usuarios/me`                    | Datos del usuario y saldo         |
-| POST   | `/api/usuarios/me/depositar`          | `{ monto }` — recarga saldo demo  |
-| GET    | `/api/transacciones?limit=50`         | Historial del usuario             |
-
-### Juegos
-
-| Método | Ruta                              | Descripción                                                    |
-|--------|-----------------------------------|----------------------------------------------------------------|
-| GET    | `/api/juegos`                     | Catálogo (slots, roulette, blackjack)                          |
-| POST   | `/api/juegos/slots/jugar`         | `{ apuesta }` → `{ resultado, saldo }`                         |
-| POST   | `/api/juegos/roulette/jugar`      | `{ apuestas:[{tipo,valor,monto}] }` → `{ resultado, saldo }`  |
-| POST   | `/api/juegos/blackjack/iniciar`   | `{ apuesta }` → `{ sesionId, jugador, banca, ... }`            |
-| POST   | `/api/juegos/blackjack/accion`    | `{ sesionId, accion: pedir/plantarse/doblar }`                 |
-
-### Salud
-
-| Método | Ruta       | Descripción                  |
-|--------|------------|------------------------------|
-| GET    | `/health`  | Estado del servidor + BD     |
-| GET    | `/`        | Mensaje de bienvenida        |
-
----
-
-## Usuarios demo (sembrados al arrancar)
-
-| username   | password    | rol      | saldo inicial |
-|------------|-------------|----------|---------------|
-| `demo`     | `demo1234`  | jugador  | $5.000        |
-| `jugador1` | `demo1234`  | jugador  | $1.000        |
-| `admin`    | `admin1234` | admin    | $99.999       |
-
----
-
-## Cómo correr en local (sin Docker)
-
-Requisitos: Node 20 y un Postgres accesible.
+### Local
 
 ```bash
-cp .env.example .env          # ajustar credenciales
-npm install                   # genera node_modules (y package-lock.json local, no se commitea)
+cp .env.example .env
+npm install
 npm start
-# API disponible en http://localhost:3000
+```
+
+Eso levanta el backend en `http://localhost:3000` usando las variables del `.env`. [cite:38]
+
+### Docker
+
+```bash
+docker build -t casino-backend:local .
+docker run --env-file .env -p 3000:3000 casino-backend:local
+```
+
+El `Dockerfile` ya usa una imagen Node 20 Alpine, corre como usuario `node` y expone el puerto `3000`. [cite:31]
+
+---
+
+## Endpoints principales
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| POST | `/api/auth/register` | No | Registro de usuario |
+| POST | `/api/auth/login` | No | Login y emisión de JWT |
+| GET | `/api/usuarios/me` | Sí | Perfil del usuario autenticado |
+| GET | `/api/juegos` | No | Juegos disponibles |
+| POST | `/api/juegos/:id/jugar` | Sí | Registrar partida |
+| GET | `/api/transacciones` | Sí | Historial de transacciones |
+| GET | `/livez` | No | Liveness probe de Kubernetes |
+| GET | `/readyz` | No | Readiness probe de Kubernetes |
+| GET | `/health` | No | Health legacy existente |
+
+El backend actual ya tiene `/health`, y para cumplir el PDF debes agregar además `/livez` y `/readyz` como rutas separadas para probes de Kubernetes. [cite:32][file:26]
+
+---
+
+## Health probes
+
+### `GET /livez`
+Debe responder `200` sin depender de PostgreSQL, porque Kubernetes lo usa para decidir si reinicia el pod. [file:26]
+
+```json
+{ "status": "ok", "uptime": 42.3 }
+```
+
+### `GET /readyz`
+Debe verificar conexión a PostgreSQL con `SELECT 1`; si la BD está caída responde `503` para que Kubernetes saque el pod del balanceo sin reiniciarlo. [file:26]
+
+```json
+// 200 OK
+{ "ready": true, "db": "up", "uptime": 42.3 }
+
+// 503 Service Unavailable
+{ "ready": false, "db": "down", "error": "connection refused" }
 ```
 
 ---
 
-## Conceptos DevOps clave del código
+## Cómo desplegar
 
-Los siguientes puntos son relevantes para la contenerización y despliegue en EC2.
-Busca los comentarios en el código fuente para mayor detalle.
+### Pipeline automático
 
-### 1. Configuración por variables de entorno (12-factor App)
-Toda la configuración sensible o que cambia entre ambientes (host de la BD,
-contraseña, JWT_SECRET, puerto) viene de variables de entorno, nunca
-hardcodeada. En Docker se inyectan con `-e`, en `docker-compose.yml` con la
-sección `environment:`, y en EC2 se pueden usar secretos de AWS.
+```bash
+git push origin deploy
+git tag v1.2.3
+git push origin v1.2.3
+```
 
-### 2. Endpoint `/health` y Docker HEALTHCHECK
-`GET /health` consulta la BD y responde `{ status: "ok" }` o `503`.
-Docker lo usa en el `HEALTHCHECK` del `Dockerfile`; los Load Balancers de AWS
-lo usan para enrutar tráfico solo hacia instancias/contenedores sanos.
-Deben configurar este endpoint como HEALTHCHECK en el Dockerfile del backend
-y como health check en el servicio de docker-compose.
+El workflow del repo debe hacer las tres etapas exigidas: build de imagen Docker, push a Amazon ECR y deploy en EKS. Además debe usar tres tags simultáneos: `latest`, `${{ github.sha }}` y `vX.Y.Z` cuando el trigger venga desde un tag Git. [file:26][cite:37]
 
-### 3. Binding a `0.0.0.0`
-El servidor escucha en `0.0.0.0` (todas las interfaces), no en `localhost`.
-Dentro de un contenedor, `localhost` solo aceptaría conexiones originadas
-dentro del mismo contenedor; `0.0.0.0` permite que el host (EC2) y otros
-contenedores puedan acceder.
+### Manual en EKS
 
-### 4. Reintentos de conexión a la BD (`esperarBD`)
-Cuando `docker-compose up` levanta varios servicios a la vez, el backend
-puede arrancar antes de que Postgres esté listo. `esperarBD()` reintenta
-hasta 30 veces con 2 s de espera. La solución definitiva es combinar esto
-con `depends_on: condition: service_healthy` y un `healthcheck` en el
-servicio `db` usando `pg_isready`.
+```bash
+aws eks update-kubeconfig --name <CLUSTER_NAME> --region <AWS_REGION>
+kubectl apply -f k8s/casino-secrets.yaml
+kubectl apply -f k8s/backend-deployment.yaml
+kubectl apply -f k8s/backend-service.yaml
+kubectl get pods -l app=casino-backend
+```
 
-### 5. Inicialización del esquema (`db/init.sql`)
-Postgres ejecuta los archivos `.sql` en `/docker-entrypoint-initdb.d/`
-**solo si el volumen está vacío** (primer arranque). En reinicios
-posteriores el script no se vuelve a ejecutar. Por eso todas las
-sentencias DDL usan `IF NOT EXISTS`. Deben montar este archivo en el
-contenedor de la BD usando la sección `volumes:` del docker-compose.yml.
-
-### 6. Seed idempotente
-`seed.js` inserta usuarios demo al arrancar el backend usando
-`ON CONFLICT DO NOTHING`, por lo que es seguro ejecutarlo en cada
-reinicio del contenedor sin riesgo de duplicar datos ni fallar.
-
-### 7. Pool de conexiones
-`pg.Pool` mantiene hasta 10 conexiones abiertas simultáneamente.
-En producción este valor debe ajustarse según la instancia RDS/Postgres
-y la cantidad de réplicas del contenedor.
+El manifiesto del backend debe consumir credenciales desde `casino-secrets` mediante `secretKeyRef`, sin credenciales en texto plano. [file:26]
 
 ---
 
-## Cómo lo van a contenerizar (EP2)
+## CI/CD y secrets
 
-El docente espera que ustedes:
+### GitHub Secrets requeridos
 
-1. Construyan un **Dockerfile multi-stage** (`builder` con `npm install`,
-   `runtime` `node:20-alpine` con usuario no root).
-2. Definan en el `docker-compose.yml` los servicios `db`, `backend`
-   (y agreguen el `frontend`) con:
-   - `pg_data` como **named volume** para `/var/lib/postgresql/data`.
-   - `./casino-backend/db/init.sql` montado en `/docker-entrypoint-initdb.d/`
-     (recuerden: solo se ejecuta si el volumen está vacío).
-   - `depends_on` con `condition: service_healthy` y un `healthcheck`
-     en `db` (`pg_isready`).
-   - Variables de entorno **inyectadas por compose**, sin hard-codear.
-3. Configuren workflows en `.github/workflows/` que hagan
-   `build → push (ECR) → deploy` en EC2 al hacer push a la rama
-   correspondiente (en el **Ejercicio 2.5** se usa `main`; en la
-   **EP2** la pauta oficial pide la rama `deploy`).
+| Secret | Uso |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Credencial temporal AWS Academy [file:26] |
+| `AWS_SECRET_ACCESS_KEY` | Credencial temporal AWS Academy [file:26] |
+| `AWS_SESSION_TOKEN` | Token de sesión temporal AWS Academy [file:26] |
+| `AWS_REGION` | Región de AWS [file:26] |
+| `ECR_REPOSITORY` | `casino-backend` |
+| `EKS_CLUSTER` | Nombre del clúster EKS |
 
-Lean la pauta oficial (`EP2_Instrucciones y Pauta_Encargo_Estudiante.pdf`)
-para los criterios completos.
+El workflow actual del repo todavía despliega a EC2 por SSH, así que debes reemplazarlo por uno orientado a EKS para cumplir el PDF. [cite:37][file:26]
 
 ---
 
-## Repositorio del frontend
+## Comandos útiles
 
-[`casino-frontend`](../casino-frontend)
+```bash
+kubectl get pods -l app=casino-backend
+kubectl logs -f deployment/casino-backend
+kubectl describe deployment casino-backend
+kubectl top pods -l app=casino-backend
+kubectl rollout restart deployment/casino-backend
+kubectl rollout history deployment/casino-backend
+kubectl delete pod <nombre-del-pod>
+kubectl get pods -l app=casino-backend -w
+```
+
+Estos comandos sirven para demostrar autorecuperación, revisar logs y validar que el Deployment recrea pods al borrarlos. [file:26]
+
+---
+
+## Troubleshooting
+
+### `CrashLoopBackOff`
+Revisa logs y eventos del pod:
+
+```bash
+kubectl logs <nombre-del-pod> --previous
+kubectl describe pod <nombre-del-pod>
+```
+
+Las causas más comunes son `JWT_SECRET` vacío, credenciales de BD incorrectas en `casino-secrets` o PostgreSQL no disponible al arranque. [cite:38][file:26]
+
+### `0/1 READY`
+Si falla la readiness probe, valida la conectividad a PostgreSQL desde dentro del pod. [file:26]
+
+```bash
+kubectl exec -it <nombre-del-pod> -- \
+  node -e "const {Pool}=require('pg'); new Pool({host:process.env.DB_HOST}).query('SELECT 1').then(()=>console.log('OK')).catch(console.error)"
+```
+
+### Error de CORS
+Ajusta `CORS_ORIGIN` al dominio o URL pública real del frontend cuando el LoadBalancer ya esté creado. [cite:38][file:26]
+
+### `.DS_Store` en el repo
+El repo actual tiene `.DS_Store` en la raíz, por lo que debes eliminarlo y agregarlo al `.gitignore` para no descontar por estructura. [cite:30][file:26]
+
+```bash
+git rm --cached .DS_Store
+echo ".DS_Store" >> .gitignore
+git commit -m "chore: eliminar .DS_Store y agregar a .gitignore"
+```
+
+---
+
+## Convención de commits
+
+```text
+feat:  nueva funcionalidad
+fix:   corrección de bug
+chore: mantenimiento o limpieza
+ci:    cambios en pipeline o workflows
+docs:  cambios en documentación
+test:  agregar o corregir tests
+```
+
+Ejemplos correctos:
+
+```text
+feat: agregar /livez y /readyz como health probes
+ci: migrar deploy-backend.yml de EC2 a EKS
+feat: agregar manifiestos k8s para casino-backend
+docs: actualizar README con despliegue en EKS
+chore: eliminar .DS_Store y limpiar .gitignore
+```
+
+El PDF pide explícitamente commits descriptivos con prefijos y descarta mensajes vagos como `asdf` o `fix` solo. [file:26]
